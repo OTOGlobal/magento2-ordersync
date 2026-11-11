@@ -147,6 +147,21 @@ class OrderSyncNew extends \Oto\OrderSync\Helper\OrderSync
 				$this->output->writeln('<error>'. __(' -- Order skipped : %1',@$ret['error_msg']).'</>')."\n";
 
 			} // if sonu
+			elseif ($ret['status'] == 'disabled') 
+			{
+				/// OTO answered 410 Gone: the connection is switched off, do not send the other jobs in this run.
+				/// Jobs stay in the queue and are sent again after the store is connected to OTO again.
+				$job
+					->setData('job_status','ERROR')
+					->setData('last_error_msg',@$ret['error_msg'])
+					->setData('updated_at',$this->getCurrentDateTime())
+					->save();
+
+				$this->output->writeln('<error>'. __(' -- Order not sent - %1',@$ret['error_msg']).'</>')."\n";
+
+				break;
+
+			} // if sonu
 			elseif ($ret['status'] == 'success') 
 			{
 				$job
@@ -165,6 +180,29 @@ class OrderSyncNew extends \Oto\OrderSync\Helper\OrderSync
 
 	} // eof func
 	
+	/*
+		@function
+		Clears oto_webhook_url like Disconnect does. syncOrders() then sees the store as not connected,
+		and Connect sets the url again from the registration response.
+	*/
+
+	public function disableWebhook() {
+
+		try
+		{
+			$this->_objectManager->get('Psr\Log\LoggerInterface')->warning('OTO ORDERSYNC WEBHOOK DISABLED -- OTO answered HTTP 410, oto_webhook_url is cleared. Connect to OTO again to enable it.');
+
+			$this->setConfig('oto_webhook_url', null, 'default', 0);
+			$this->cacheClean(['config','config_integration','config_integration_api','config_webservice']);
+		}
+		catch (\Throwable $e)
+		{
+			/// Never break the sync because of this, the next run gets 410 again and tries again
+			$this->_objectManager->get('Psr\Log\LoggerInterface')->error('OTO ORDERSYNC WEBHOOK DISABLE FAILED -- '.$e->getMessage());
+		}
+
+	} // eof func
+
 	/*
 		@function
 	*/
@@ -341,6 +379,17 @@ class OrderSyncNew extends \Oto\OrderSync\Helper\OrderSync
 					];
 
 		$log->setData($log_arr)->save();
+		
+		/// 410 Gone : OTO deleted or passived this webhook, stop sending until the store connects again
+		if (@$ret['info']['http_code'] == 410) 
+		{
+			$this->disableWebhook();
+
+			return [
+					'status'	=> 'disabled',
+					'error_msg'	=> (string) __("OTO webhook is deleted or passive (HTTP 410). Order sync is stopped. Connect to OTO again to start it."),
+					];
+		} // if sonu
 		
 		try{
 			$ret_arr = json_decode(trim(''.$ret['res']),true);
