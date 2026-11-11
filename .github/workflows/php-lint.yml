@@ -1,0 +1,16 @@
+name: PHP Lint
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # php runs in a container so the runner does not need PHP installed (syntax check only)
+      - name: php -l on every PHP file
+        run: |
+          docker run --rm -v "$PWD":/app -w /app php:8.2-cli sh -c \
+            "find . -name '*.php' -not -path './vendor/*' -print0 | xargs -0 -n1 php -l > /dev/null"
